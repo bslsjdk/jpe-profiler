@@ -1,54 +1,74 @@
 # JPE Profiler
 
-Independent diagnostic subproject for the Minecraft Java Optimization project.
+Independent diagnostics subproject for the Minecraft Java Optimization project.
 
 **Target:** Minecraft 26.3 · NeoForge 26.3 · Java 25.
 
-JPE Profiler is an observation tool, not an optimizer. It records runtime telemetry so optimization work can be based on measured bottlenecks rather than guesses.
+JPE Profiler observes the game. It does not patch or optimize Minecraft. Its job is to produce measurements that the separate optimization mod can use.
 
-## Implemented
+## Current telemetry
 
-- JVM heap used/committed/max and non-heap used, sampled once per second.
-- Garbage-collection count and time deltas between samples.
-- Bounded in-memory queue and a dedicated background CSV writer.
-- Dropped-record counter when the queue is full.
-- Shutdown path that stops the sampler and lets the writer drain queued records.
+The NeoForge 26.3 game-bus and physical-client event listeners collect:
 
-## Not implemented yet
+- **JVM/runtime:** heap and non-heap usage, GC count/time deltas, process/system CPU load, live thread counts.
+- **Tick timing:** server tick, client tick, and per-dimension level tick wall time. Each interval exports count, total, maximum, and count over its configured slow threshold.
+- **Frame timing:** full frame CPU wall-clock interval measured around RenderFrameEvent.Pre/Post.
+- **Render checkpoints:** elapsed wall time between successive RenderLevelStageEvent checkpoints. These are intervals ending at a checkpoint, not isolated GPU timings or exact GPU stage durations.
+- **Chunk lifecycle:** full chunk load/unload, new-chunk flag, chunk-data load/save, player watch/sent/unwatch, and chunk ticket-level changes.
+- **Entity/world lifecycle:** entity tick completion count, joins (including disk-loaded joins), leaves, section transitions, transitions that cross chunk boundaries, and level load/unload/save.
 
-- Server/client tick and frame timing.
-- Chunk, entity, block and world lifecycle events.
-- Allocation-rate attribution and sampled stack traces.
-- JFR recording and GPU timing.
+High-frequency callbacks update in-memory counters/timers only. CSV formatting and disk I/O run on a dedicated background writer behind a bounded queue. dropped_records makes queue overflow visible instead of silently hiding it.
 
-These are planned work, not current features. Do not infer a specific bottleneck from heap size or GC totals alone.
+## Output files
 
-## Output
+All output is written under the game directory at logs/jpe-profiler/.
 
-Files are written under:
+Each launch gets a session timestamp in its filenames:
 
-`<game directory>/logs/jpe-profiler/`
+- runtime-<session>.csv — JVM, GC, CPU and thread snapshots.
+- events-<session>.csv — per-second tick timings and lifecycle event counts.
+- level-ticks-<session>.csv — per-dimension level tick timing.
+- render-stages-<session>.csv — elapsed intervals ending at render checkpoints.
+- profile-<session>.jfr — optional Java Flight Recorder capture, written on clean shutdown.
 
-- `runtime-<session>.csv`
+See docs/TELEMETRY_SCHEMA.md for column meanings and interpretation notes.
 
-CSV columns:
+## Optional method and allocation profiling (JFR)
 
-`timestamp,heap_used,heap_committed,heap_max,nonheap_used,gc_count_delta,gc_time_ms_delta,dropped_records`
+JFR is opt-in because stack-sampled profiling can add overhead. Add this JVM argument to the Minecraft client or dedicated-server launch:
 
-All file I/O runs on the writer thread. Game threads do not wait for disk writes.
+    -Djpe.profiler.jfr=true
+
+The recording uses the JDK profile configuration and explicitly enables:
+
+- jdk.ExecutionSample with stack traces, for sampled CPU hot methods.
+- jdk.ObjectAllocationSample with stack traces, for sampled allocation sites.
+- jdk.ThreadAllocationStatistics at one-second intervals.
+
+The recording is capped at 30 minutes and 256 MiB. It is dumped when the game process shuts down cleanly. If JFR is unavailable or cannot start, CSV telemetry continues and a warning is logged.
+
+With JDK 25 command-line tools, inspect a capture with:
+
+    jfr summary profile-<session>.jfr
+    jfr print --events jdk.ExecutionSample,jdk.ObjectAllocationSample profile-<session>.jfr
+
+Allocation sampling is statistical, not a complete count of every object. Use repeated captures and compare them against an unprofiled baseline.
+
+## Interpretation limits
+
+- RenderFrameEvent measures CPU-side elapsed wall time around the frame. It is not GPU execution time and can include time spent waiting for the GPU or the operating system.
+- Render checkpoint values measure the interval from the preceding checkpoint to the current one. They do not isolate an individual rendering method.
+- ChunkEvent.Load is emitted when a full chunk is loaded into a level. isNewChunk() flags newly generated chunks on the server; it does not time each world-generation stage.
+- Entity tick counts describe completed entity-tick events, not per-entity CPU cost. Use JFR execution samples to locate methods consuming CPU time.
+- Tick durations are wall-clock intervals. They can include scheduling delays and waits, not just CPU execution.
+- Public events cannot expose every internal operation. Treat counters as evidence of workload, not automatic proof of a bottleneck.
 
 ## Build
 
-Requires JDK 25 and a Gradle installation:
+Requires JDK 25:
 
-```bash
-gradle build --no-daemon
-```
+    gradle build --no-daemon
 
-## Important limitations
+## Project boundary
 
-NeoForge has no public wildcard event for every internal Minecraft operation. Public events alone cannot identify exact allocation hot methods, every world-generation substage, or GPU execution time. Those require carefully scoped instrumentation, JFR, or renderer-specific probes. Frame wall-time is not GPU time.
-
-## Project rule
-
-Keep this repository independent from the main optimization mod. The profiler measures and exports evidence; the optimization project consumes that evidence and implements fixes. Do not claim a bottleneck is proven from correlation alone.
+Keep this repository independent from the actual optimization mod. The profiler measures and exports evidence; the optimization project consumes that evidence and implements fixes. Do not mix profiler instrumentation with optimization patches.
