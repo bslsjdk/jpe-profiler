@@ -36,6 +36,6 @@ public final class ClientTelemetryEvents {
 
     @SubscribeEvent
     public static void onRenderStage(RenderLevelStageEvent event) {
-        TELEMETRY.renderStage(event.getClass().getSimpleName());
+        TELEMETRY.renderStage(event.getClass());
     }
 }
