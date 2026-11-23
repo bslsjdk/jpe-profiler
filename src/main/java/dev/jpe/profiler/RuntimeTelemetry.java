@@ -24,7 +24,6 @@ import com.sun.management.OperatingSystemMXBean;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 import jdk.jfr.RecordingState;
-import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.neoforged.fml.loading.FMLPaths;
 
@@ -332,7 +331,7 @@ public final class RuntimeTelemetry implements AutoCloseable {
         LevelClock clock = levelClock.get();
         clock.start = System.nanoTime();
         clock.label = levelLabels.computeIfAbsent(level,
-                value -> (value.isClientSide() ? "client:" : "server:") + value.dimension().location());
+                value -> (value.isClientSide() ? "client:" : "server:") + value.dimension().toString());
     }
 
     public void endLevelTick() {
