@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.LongAdder;
 import com.sun.management.OperatingSystemMXBean;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
+import jdk.jfr.RecordingState;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.neoforged.fml.loading.FMLPaths;
