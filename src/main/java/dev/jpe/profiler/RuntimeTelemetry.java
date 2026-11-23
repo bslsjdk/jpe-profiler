@@ -401,7 +401,7 @@ public final class RuntimeTelemetry implements AutoCloseable {
     public void levelLoaded(Level level) {
         levelLoads.increment();
         levelLabels.computeIfAbsent(level,
-                value -> (value.isClientSide() ? "client:" : "server:") + value.dimension().location());
+                value -> (value.isClientSide() ? "client:" : "server:") + value.dimension().toString());
     }
     public void levelUnloaded(Level level) {
         levelUnloads.increment();
