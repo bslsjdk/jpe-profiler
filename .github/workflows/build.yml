@@ -25,6 +25,12 @@ jobs:
       - name: Build
         run: gradle build --no-daemon
 
-      # Artifact upload is intentionally omitted: this repository's GitHub
-      # Actions artifact storage quota is currently exhausted. The build
-      # itself remains the CI success criterion.
+      - name: Upload test mod
+        if: success()
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: jpe-profiler-test-\${{ github.sha }}
+          path: build/libs/*.jar
+          if-no-files-found: error
+          retention-days: 1
