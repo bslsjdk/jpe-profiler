@@ -84,6 +84,12 @@ public final class RuntimeTelemetry implements AutoCloseable {
     private final ConcurrentHashMap<Level, String> levelLabels = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, WindowMetric> levelTickByDimension = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, WindowMetric> renderStageIntervals = new ConcurrentHashMap<>();
+    private final ClassValue<String> renderStageNames = new ClassValue<>() {
+        @Override
+        protected String computeValue(Class<?> type) {
+            return "interval_ending_at_" + type.getSimpleName();
+        }
+    };
 
     private final ThreadLocal<TickClock> serverClock = ThreadLocal.withInitial(TickClock::new);
     private final ThreadLocal<TickClock> clientClock = ThreadLocal.withInitial(TickClock::new);
@@ -365,11 +371,12 @@ public final class RuntimeTelemetry implements AutoCloseable {
         clock.lastStage = 0L;
     }
 
-    public void renderStage(String stageName) {
+    public void renderStage(Class<?> stageType) {
         FrameClock clock = frameClock.get();
         long now = System.nanoTime();
         if (clock.start != 0L && clock.lastStage != 0L && now >= clock.lastStage) {
-            renderStageIntervals.computeIfAbsent("interval_ending_at_" + stageName, ignored -> new WindowMetric())
+            String stageKey = renderStageNames.get(stageType);
+            renderStageIntervals.computeIfAbsent(stageKey, ignored -> new WindowMetric())
                     .record(now - clock.lastStage, SLOW_FRAME_NS);
         }
         if (clock.start != 0L) clock.lastStage = now;
