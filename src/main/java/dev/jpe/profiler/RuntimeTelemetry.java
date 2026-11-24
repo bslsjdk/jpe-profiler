@@ -1,6 +1,5 @@
 package dev.jpe.profiler;
 
-import com.sun.management.ThreadMXBean;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.lang.management.GarbageCollectorMXBean;
@@ -13,11 +12,15 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
+import java.lang.reflect.Method;
+import java.lang.reflect.InvocationTargetException;
 
 import net.neoforged.fml.loading.FMLPaths;
 
@@ -30,10 +33,9 @@ public final class RuntimeTelemetry implements AutoCloseable {
             ManagementFactory.getGarbageCollectorMXBeans();
     private final java.lang.management.ThreadMXBean standardThreads =
             ManagementFactory.getThreadMXBean();
-    private final ThreadMXBean extendedThreads =
-            standardThreads instanceof ThreadMXBean bean ? bean : null;
     private final boolean cpuTimeEnabled = enableCpuTime();
-    private final boolean allocationEnabled = enableThreadAllocation();
+    private final Method threadAllocatedBytes = findThreadAllocationMethod();
+    private final boolean allocationEnabled = threadAllocatedBytes != null;
     private final Map<Long, ThreadSnapshot> previousThreads = new HashMap<>();
     private final ArrayBlockingQueue<OutputLine> queue = new ArrayBlockingQueue<>(4096);
     private final LongAdder dropped = new LongAdder();
@@ -85,15 +87,32 @@ public final class RuntimeTelemetry implements AutoCloseable {
         }
     }
 
-    private boolean enableThreadAllocation() {
+    private Method findThreadAllocationMethod() {
         try {
-            if (extendedThreads == null || !extendedThreads.isThreadAllocatedMemorySupported()) return false;
-            if (!extendedThreads.isThreadAllocatedMemoryEnabled()) {
-                extendedThreads.setThreadAllocatedMemoryEnabled(true);
+            Class<?> extension = Class.forName("com.sun.management.ThreadMXBean");
+            if (!extension.isInstance(standardThreads)) return null;
+            if (!(Boolean) extension.getMethod("isThreadAllocatedMemorySupported").invoke(standardThreads)) {
+                return null;
             }
-            return extendedThreads.isThreadAllocatedMemoryEnabled();
-        } catch (UnsupportedOperationException | SecurityException ignored) {
-            return false;
+            boolean enabled = (Boolean) extension.getMethod("isThreadAllocatedMemoryEnabled").invoke(standardThreads);
+            if (!enabled) {
+                extension.getMethod("setThreadAllocatedMemoryEnabled", boolean.class).invoke(standardThreads, true);
+            }
+            if (!(Boolean) extension.getMethod("isThreadAllocatedMemoryEnabled").invoke(standardThreads)) {
+                return null;
+            }
+            return extension.getMethod("getThreadAllocatedBytes", long.class);
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private long allocatedBytes(long threadId) {
+        if (threadAllocatedBytes == null) return -1L;
+        try {
+            return (Long) threadAllocatedBytes.invoke(standardThreads, threadId);
+        } catch (IllegalAccessException | InvocationTargetException | RuntimeException ignored) {
+            return -1L;
         }
     }
 
@@ -135,7 +154,7 @@ public final class RuntimeTelemetry implements AutoCloseable {
             if (info == null) continue;
             long id = ids[i];
             long cpu = cpuTimeEnabled ? standardThreads.getThreadCpuTime(id) : -1L;
-            long allocated = allocationEnabled ? extendedThreads.getThreadAllocatedBytes(id) : -1L;
+            long allocated = allocationEnabled ? allocatedBytes(id) : -1L;
             ThreadSnapshot previous = previousThreads.put(id, new ThreadSnapshot(cpu, allocated));
             long cpuDelta = previous == null ? -1L : delta(previous.cpuNanos, cpu);
             long allocationDelta = previous == null ? -1L : delta(previous.allocatedBytes, allocated);
@@ -143,7 +162,9 @@ public final class RuntimeTelemetry implements AutoCloseable {
                     + info.getThreadState().name() + "," + info.isDaemon() + ","
                     + cpuDelta + "," + allocationDelta);
         }
-        previousThreads.keySet().removeIf(id -> standardThreads.getThreadInfo(id, 0) == null);
+        Set<Long> alive = new HashSet<>(ids.length * 2);
+        for (long id : ids) alive.add(id);
+        previousThreads.keySet().removeIf(id -> !alive.contains(id));
     }
 
     private long gcCount() {
@@ -198,7 +219,6 @@ public final class RuntimeTelemetry implements AutoCloseable {
     public void close() {
         running = false;
         sampler.interrupt();
-        writer.interrupt();
     }
 
     private record OutputLine(boolean thread, String value) {}
