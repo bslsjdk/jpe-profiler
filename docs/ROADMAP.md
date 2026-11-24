@@ -4,7 +4,8 @@
 - [x] Define independent profiler subproject and output contract.
 - [ ] Compile against the exact NeoForge 26.3 MDK.
 - [ ] Verify event signatures and physical-client isolation.
-- [ ] Validate bounded asynchronous CSV/JSONL writer.
+- [x] Add bounded asynchronous runtime/thread CSV writer.
+- [x] Sample per-thread CPU time and optional allocated-byte deltas.
 - [ ] Test on desktop Java 25 and the actual ZL2 runtime.
 
 ## Phase 2 — attribution
